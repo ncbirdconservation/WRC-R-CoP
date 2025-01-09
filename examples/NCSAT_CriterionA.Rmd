@@ -1,0 +1,832 @@
+---
+title: "NC SAT Criterion A Analyses"
+Author: "Scott K Anderson"
+Date: "2023-12-14"
+output: 
+  html_document:
+    toc: true
+    toc_dept: 2
+always_allow_hmtl: TRUE
+--- 
+```{r setup, includ = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+```
+
+# Introduction
+This R script implements the NC Wildlife Resources Commission Species Assessment Tool Criterion A analysis: random re-sampling (Fisher's Exact Test) and fixed re-sampling (McNemar's Test).
+
+See NCSAT documentation for details.
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(lubridate)
+library(DT)
+library(Hmisc)
+
+DT:::DT2BSClass( c("compact", "cell-border"))
+
+dt_opts = list(
+  info = FALSE,
+  paging = FALSE,
+  searching = FALSE,
+  scrollX = FALSE,
+  scrollY = FALSE,
+  ordering = FALSE
+  )
+
+```
+
+# Data Evaluation
+
+Data must indicate presence-absence of the species, including survey locations where:
+
+* habitat is appropriate
+* survey methods would reasonably detect the species
+* detection probablity is similar across time periods (i.e., uses similar methods)
+
+See [Ewing and Gangloff 2016](https://www.researchgate.net/profile/Todd-Ewing/publication/303565271_Using_Changes_in_Naive_Occupancy_to_Detect_Population_Declines_in_Aquatic_Species_Case_Study_Stability_of_Greenhead_Shiner_in_North_Carolina/links/57487e9208ae5f7899b9d6a9/Using-Changes-in-Naive-Occupancy-to-Detect-Population-Declines-in-Aquatic-Species-Case-Study-Stability-of-Greenhead-Shiner-in-North-Carolina.pdf) for more details.
+
+# User Variables
+Begin by modifying the following variables for your analysis.
+
+```{r}
+setwd(
+    paste0(
+        "C:\\Users\\skanderson\\OneDrive - State of North Carolina\\",
+        "Documents - WRC_Wildlife Management Division\\Wildlife Diversity ",
+        "program\\projects\\species_listing\\NCSAT_Process_Guide\\Testing ",
+        "NCSAT\\birds"
+    )
+)
+# setwd("~/")
+
+```
+```{r, echo=FALSE}
+#setup example data table
+f_ex <- "./data/example_data_jhall.csv"
+data_ex <- read.csv(
+  f_ex,
+  sep = ",",
+  header = TRUE
+)
+
+```
+
+### File Location and Format
+This file should contain zero-filled data, with one row per survey event in a csv (comma-separated values text file) and contain the following fields:
+
+ * presence/absence (TRUE/FALSE)
+ * year
+ * location (unique identifier for the survey site)
+
+An example data table would look like this:
+```{r, echo=FALSE}
+datatable(data_ex[1:5, ], options = dt_opts, width = "75%")
+```
+
+Set the year and the presence/absence field (boolean) below:
+```{r}
+presence_field <- "species_observed"
+year <- "year"
+location_id <- "locality_id"
+```
+
+Set file location relative to working directory:
+```{r}
+f_zf <- "./data/ebd_sesp_nc_coast_zf_breeding.csv"
+# f_zf <- "./data/example_data_jhall.csv"
+```
+
+### Generation Length
+
+Set generation length. See NCSAT documentation for calculating.
+```{r}
+# gen_len <- 4 # in years
+gen_len <- "unknown" # unknown generation length
+```
+
+### Latest year
+Set the most recent year of data to use in the analysis (i.e., the end of the "recent" time period).
+
+Set to "calculate" if you want to use the last year of the data.
+
+```{r}
+latest_year <- "calculate"
+# Year example:
+# latest_year <- 2022
+```
+
+### Confidence Level
+Set values for running Fisher Exact test:
+
+* alpha: the confidence level of the test, usually 0.90 or 0.95 (i.e., there is only a 10% or 5%, respectively, likelihood the data could occur from a random process)
+
+* z: the z value for the corresponding alpha level
+
+* alt: determines the definition of the null hypothesis to test (signficiant p-values indicate rejection of hull hypothesis)
+
+  * greater = historical/past is less than or equal to recent occupancy
+
+  * less = historical/past is greater than or equal to recent occupancy
+
+  * two-sided = historical/past is the same as recent occupancy
+
+```{r}
+
+ci <- data.frame(
+  alpha = 0.9,
+  z = 1.645,
+  alt = "greater"
+)
+
+# note
+# z_90 <- 1.645
+# z_95 <- 1.96
+```
+
+### Analyses to Run
+Set as TRUE/FALSE for the analyses to run.
+
+  * Fixed Resampling: appropriate for repeated visits to the same site/location
+  * Random Resampling: appropriate for visits to different sites/locations between years
+
+```{r}
+  random_resampling <- TRUE
+  fixed_resampling <- TRUE
+```
+
+
+```{r, echo=FALSE}
+#################################################################
+# Set up functions to be used in the script below
+
+
+
+################################
+# statistical analysis input table
+# create a matrix from passed data frame for statistical analysis
+make_matrix <- function(tp1, tp2, rownames){
+  
+  my_matrix <-  matrix(
+    c(
+      c(tp1$detected, tp2$detected),
+      c(tp1$absent, tp2$absent)
+      ),
+    ncol = 2
+  )
+  rownames(my_matrix) <- rownames
+  colnames(my_matrix) <- c("detected","absent")
+  my_matrix
+}
+
+################################
+# time period statistics
+# create a table of time period statistics for the passed list of values
+df_calc_stats_cols <- c(
+  "tp",
+  "method",
+  "n",
+  "detected",
+  "absent",
+  "naive_occ",
+  "sd",
+  "se",
+  "lcl",
+  "ucl"
+)
+
+################################
+# create blank tp_stats dataframe
+tp_stats <- data.frame(
+  matrix(
+    nrow = 0,
+    ncol = length(df_calc_stats_cols)
+  )
+)
+colnames(tp_stats) = df_calc_stats_cols
+
+df_calc_stats <- function(df, tp, method, sites = c()){
+  if (length(sites) > 0) {
+    # fixed analysis, return only passed list of sites
+    df <- df[df$site %in% sites,]
+  }
+
+  det <- sum(df$detected) # number of sites with detection
+  n <- nrow(df) # number of records
+  abs <- n - det # number of sites without detections
+  df_sd <- sd(df$detected) # standard deviation
+  df_se <- df_sd / sqrt(n) # standard error
+  df_mean <- mean(df$detected) # mean
+  results <- data.frame(
+    tp = tp,
+    method = method,
+    n = n,
+    detected = det,
+    absent = abs,
+    naive_occ = df_mean,
+    sd = df_sd,
+    se = df_se,
+    lcl = df_mean - (ci$z * df_se),
+    ucl = df_mean + (ci$z * df_se)
+  )
+  results
+}
+
+################################################################
+## CONSIDER WRITING FUNCTION TO RUN ANALYSES AND OUTPUT COMPOENENTS
+get_comparison <- function(
+  tp1,
+  tp1_name,
+  tp2,
+  tp2_name,
+  analysis_type,
+  compare
+  ) {
+  # inputs:
+  #   tp1 = time period 1 data
+  #   tp2 = time period 2 data
+  #   analysis_type = "fixed" or "random"
+  #   compare = time period list (e.g. c("past", "recent"))
+  # outputs:
+  #   no_change,
+  #   no_change_decline,
+  #   change_text,
+  #   comp_table_values,
+  #   data_table,
+  #   test_matrix,
+  if (analysis_type == "fixed"){
+    # get list of sites surveyed in both time periods
+    s <- intersect(tp1$site, tp2$site)
+    tp1 <- df_calc_stats(
+      tp1,
+      tp = tp1_name,
+      method = analysis_type,
+      sites = s
+    )
+    tp2 <- df_calc_stats(
+      tp2,
+      tp = tp2_name,
+      method = analysis_type,
+      sites = s
+    )
+  } else {
+    tp1 <- df_calc_stats(tp1, tp = tp1_name, method = analysis_type)
+    tp2 <- df_calc_stats(tp2, tp = tp2_name, method = analysis_type)
+  }
+
+
+  # format text for tables
+  nc <- ((tp2$naive_occ - tp1$naive_occ) / tp1$naive_occ) * 100
+  nc <- f_dec(nc, d = 3)
+  ncd <- f_dec(-1 * nc, d = 3)
+  ct <- paste0(
+    "Data suggests ",
+    f_dec(nc, d = 2),
+    "% change between past and recent naive occupancy values."
+  )
+  comp_text <- build_compare_text(compare)
+  ncd_text <- paste0(ncd, "%")
+  tp1_occ_text <- build_occ_text(tp1)
+  tp2_occ_text <- build_occ_text(tp2)
+  comp_n <- sum(tp1$n, tp2$n)
+
+
+  # update tp_stats df, if not already in table
+  tp_method_vals <- paste0(tp_stats$tp, tp_stats$method)
+  if (!(paste0(tp1$tp, tp1$method) %in% tp_method_vals)) {
+    tp_stats <<- rbind(
+      tp_stats,
+      tp1
+    )
+  }
+  if (!(paste0(tp2$tp, tp2$method) %in% tp_method_vals)) {
+    tp_stats <<- rbind(
+      tp_stats,
+      tp2
+    )
+  }
+
+  # stats matrix
+  # format data for stats test
+  tm <- make_matrix(
+    tp1,
+    tp2,
+    rownames = compare
+  )
+  
+  # create data table
+  dt_data <- tp_stats[
+    tp_stats$tp %in% compare & tp_stats$method == analysis_type,
+    dt_cols
+  ] %>%
+  mutate(
+    naive_occ = f_dec(naive_occ, d = 3)
+  )
+
+  dt <- datatable(
+    dt_data,
+    options = dt_opts,
+    colnames = comparison_colnames
+  )
+
+  results <- list(
+    no_change = nc,
+    no_change_decline = ncd,
+    change_text = ct,
+    comp_text = comp_text,
+    ncd_text = ncd_text,
+    tp1_occ_text = tp1_occ_text,
+    tp2_occ_text = tp2_occ_text,
+    comp_n = comp_n,
+    test_matrix = tm,
+    data_table = dt
+  )
+
+  return(results)
+
+}
+
+
+################################
+# data formatting functions
+
+# shortcut to format numbers with 3 digits
+f_dec <- function(v, d = 3) {
+  v <- as.numeric(v)
+  round(v, digits = d)
+}
+
+# shortcut to format p-values to be <0.0001 if super low
+f_p <- function(p) {
+  p <- as.numeric(p)
+  ifelse(
+    p < 0.0001,
+    "<0.0001",
+    as.character(p)
+  )
+}
+
+# shortcut to format occupancy with Confidence Levels
+build_occ_text <- function(tp) {
+  # pass the row from the dataframe
+  paste0(
+    f_dec(tp$naive_occ), 
+    " (",
+    f_dec(tp$lcl),
+    " - ",
+    f_dec(tp$ucl),
+    ")"
+  )
+}
+
+# shortcut to format compare text nicely
+build_compare_text <- function(tps, pretty = FALSE) {
+  if (pretty) {
+    paste0(
+      str_to_title(tps[1]),
+      " v ",
+      str_to_title(tps[2])
+    )
+  } else {
+    paste0(
+      tps[1],
+      "_v_",
+      tps[2]
+    )
+
+  }
+}
+
+################################
+# data comparison tables
+
+# column list
+dt_cols <- c("tp", "method", "detected", "absent", "n", "naive_occ")
+
+# pretty column names
+comparison_colnames <- c(
+  "Time Period",
+  "Method",
+  "Detected",
+  "Absent",
+  "Total",
+  "Naive Occupancy"
+)
+
+################################
+# final result comparison table
+# create blank results comparison table
+results_comp <- data.frame(
+  comparison = character(),
+  method = character(),
+  pct_decline = character(),
+  initial_occupancy = character(),
+  recent_occupancy = character(),
+  n = integer(),
+  p = character()
+)
+
+```
+
+
+# Set Up Data For Statistical Analysis
+
+### Load the Dataset
+```{r}
+data_zf <- read.csv(
+  f_zf,
+  sep = ",",
+  header = TRUE
+)
+```
+
+### Calculate Time Periods
+See documentation for calculating generation length.
+
+```{r}
+# determine three generation length
+if (!is.numeric(gen_len)) {
+  three_gen <- 10
+  gen_len <- f_dec(three_gen / 3, d = 0)
+} else {
+  three_gen <- 3 * gen_len
+}
+# determine latest year
+if (!is.numeric(latest_year)){
+  latest_year <- max(data_zf[[year]])
+} else {
+  latest_year <- as.numeric(latest_year)
+}
+
+# recent will always be a time period
+recent_start <- latest_year - (0.5 * three_gen)
+recent_end <- latest_year
+
+#past
+past_start <- latest_year - three_gen
+past_end <- recent_start - 1
+
+# historical
+oldest_year <- min(data_zf[[year]])
+hist_start <- oldest_year
+hist_end <- recent_start - 1
+
+# Time periods
+
+tp <- data.frame(
+  c(recent_start, past_start, hist_start),
+  c(recent_end, past_end, hist_end)
+)
+rownames(tp) <- c("Recent", "Past", "Historical")
+colnames(tp) <- c("Start", "End")
+```
+
+### Time Period Begin and End Years
+
+```{r echo=FALSE}
+datatable(tp, options = dt_opts, width = "50%")
+```
+```{r, results='asis',echo=FALSE}
+# place a statement of generation times
+cat(
+  paste0(
+    gen_len,
+    " Year Generation Time",
+    "  --  ",
+    three_gen,
+    " Year Three Generation Time"
+  )
+)
+```
+
+### Reformat Data
+Prepare data for analysis.
+
+```{r}
+
+# list of fields to add to the data set
+fet_fields <- c(
+  "site", # unique id for the site surveyed
+  "recent", # boolean for recent time period
+  "past", # boolean for past time period
+  "historical", # boolean for historical time period
+  "detected" # 1 if detected, 0 if not
+)
+
+# add fields to data frame, return data frame with only required fields
+data_zf <- data_zf %>%
+  mutate(
+    detected = ifelse(
+      get(presence_field),
+      1,
+      0
+    ),
+    recent = (!!as.name(year) >= recent_start & !!as.name(year) <= recent_end),
+    past = (!!as.name(year) >= past_start & !!as.name(year) <= past_end),
+    historical = (!!as.name(year) >= hist_start & !!as.name(year) <= hist_end),
+    site = (!!as.name(location_id))
+  ) %>%
+  select(all_of(fet_fields))
+
+# get encounter histories and stats for each time period
+# build table of stats for each time period
+
+########################################################
+### NEEDS ATTENTION
+### For now, shrinks data to only have one row per
+### site-time period combination. Uses the maximum value
+### for detection. This ignores different sampling effort
+### during each time period (i.e., more visits to a site
+### increases chances of detection).
+### See group_by and summarise stages below
+
+### Adds site_visits column with count of number of surveys
+### during the time period.
+
+### To Do: confirm original methodology for use of
+### McNemar's Test - modify code to match
+
+########################################################
+
+recent <- data_zf  %>%
+  filter(recent) %>%
+  group_by(site) %>%
+  summarise(
+    recent = max(recent),
+    past = max(past),
+    historical = max(historical),
+    detected = max(detected),
+    site_visits = n()
+  )
+
+past <- data_zf  %>%
+  filter((past)) %>%
+  group_by(site) %>%
+  summarise(
+    recent = max(recent),
+    past = max(past),
+    historical = max(historical),
+    detected = max(detected),
+    site_visits = n()
+  )
+
+historical <- data_zf  %>%
+  filter((historical)) %>%
+  group_by(site) %>%
+  summarise(
+    recent = max(recent),
+    past = max(past),
+    historical = max(historical),
+    detected = max(detected),
+    site_visits = n()
+  )
+```
+
+# Past vs. Recent
+
+## Random Re-Sampling
+Appropriate where diffeent sites are sampled across time periods.
+
+```{r}
+# function to get comparison information
+pr_random_comp <- get_comparison(
+  tp1 = past,
+  tp1_name = "past",
+  tp2 = recent,
+  tp2_name = "recent",
+  analysis_type = "random",
+  compare = c("past", "recent")
+)
+
+```
+
+### Frequency Table
+
+```{r}
+
+pr_random_comp$data_table
+```
+```{r, results='asis',echo=FALSE}
+cat(pr_random_comp$change_text)
+
+```
+
+### Results
+
+```{r eval = random_resampling}
+# get data for past v recent random comparison
+
+pr_random_results <- fisher.test(
+  pr_random_comp$test_matrix,
+  conf.level = ci$alpha,
+  alternative = ci$alt
+)
+
+#add these results to the comparison table
+results_comp[nrow(results_comp) + 1, ] <-
+  c(
+    pr_random_comp$comp_text,
+    "Random",
+    pr_random_comp$ncd_text,
+    pr_random_comp$tp1_occ_text,
+    pr_random_comp$tp2_occ_text,
+    pr_random_comp$comp_n,
+    format(
+      c( f_p( pr_random_results$p )),
+      digits = 4
+    )
+  )
+
+
+pr_random_results
+
+```
+
+
+## Fixed Re-Sampling
+Appropriate when the same sites are sampled across time periods.
+
+```{r}
+
+# function to get comparison information
+pr_fixed_comp <- get_comparison(
+  tp1 = past,
+  tp1_name = "past",
+  tp2 = recent,
+  tp2_name = "recent",
+  analysis_type = "fixed",
+  compare = c("past", "recent")
+)
+
+```
+
+### Frequency Table
+
+```{r}
+pr_fixed_comp$data_table
+```
+```{r, results='asis',echo=FALSE}
+
+cat(pr_fixed_comp$change_text)
+
+```
+
+### Results
+```{r}
+if (fixed_resampling){
+  pr_fixed_results <- mcnemar.test(
+    pr_fixed_comp$test_matrix
+  )
+
+  #add these results to the comparison table
+  
+results_comp[nrow(results_comp) + 1, ] <-
+  c(
+    pr_fixed_comp$comp_text,
+    "Fixed",
+    pr_fixed_comp$ncd_text,
+    pr_fixed_comp$tp1_occ_text,
+    pr_fixed_comp$tp2_occ_text,
+    pr_fixed_comp$comp_n,
+    format(
+      c( f_p( pr_random_results$p.value)),
+      digits = 4
+    )
+  )
+
+  pr_fixed_results
+}
+```
+
+# Historical vs. Recent
+
+## Random Re-Sampling
+Appropriate when different sites are sampled across time periods.
+
+```{r}
+# function to get comparison information
+hr_random_comp <- get_comparison(
+  tp1 = historical,
+  tp1_name = "historical",
+  tp2 = recent,
+  tp2_name = "recent",
+  analysis_type = "random",
+  compare = c("historical", "recent")
+)
+
+```
+
+### Frequency Table
+
+```{r}
+# put data in table for formatting output
+hr_random_comp$data_table
+```
+```{r, results='asis',echo=FALSE}
+# read out comparison results
+cat(hr_random_comp$change_text)
+```
+
+### Results
+```{r}
+if (random_resampling) {
+
+  hr_random_results <- fisher.test(
+    hr_random_comp$test_matrix,
+    conf.level = ci$alpha,
+    alternative=ci$alt
+  )
+
+  # add these results to the comparison table
+  results_comp[nrow(results_comp) + 1, ] <-
+    c(
+      hr_random_comp$comp_text,
+      "Random",
+      hr_random_comp$ncd_text,
+      hr_random_comp$tp1_occ_text,
+      hr_random_comp$tp2_occ_text,
+      hr_random_comp$comp_n,
+      format(
+        c( f_p(hr_random_results$p )),
+        digits = 4
+      )
+    )
+
+  hr_random_results
+}
+```
+## Fixed Re-Sampling
+
+Appropriate when the same sites are sampled across time periods.
+
+```{r}
+# function to get comparison information
+hr_fixed_comp <- get_comparison(
+  tp1 = historical,
+  tp1_name = "historical",
+  tp2 = recent,
+  tp2_name = "recent",
+  analysis_type = "fixed",
+  compare = c("historical", "recent")
+)
+
+```
+
+### Frequency Table
+
+```{r}
+hr_fixed_comp$data_table
+```
+```{r, results='asis',echo=FALSE}
+cat(hr_fixed_comp$change_text)
+```
+
+### Results
+```{r}
+if (fixed_resampling){
+
+  hr_fixed_results <- mcnemar.test(
+    hr_fixed_comp$test_matrix
+  )
+
+  # add these results to the comparison table
+  results_comp[nrow(results_comp) + 1,] = 
+    c(
+      hr_fixed_comp$comp_text,
+      "Fixed",
+      hr_fixed_comp$ncd_text,
+      hr_fixed_comp$tp1_occ_text,
+      hr_fixed_comp$tp2_occ_text,
+      hr_fixed_comp$comp_n,
+      format(
+        c( f_p(hr_fixed_results$p.value)),
+        digits = 4
+      )
+    )
+
+  hr_fixed_results
+}
+```
+
+# Results Comparison
+
+NCSAT Criterion A Data Table
+
+```{r}
+
+result_cols <- c(
+  "",
+  "Comparison",
+  "Method",
+  "% Decline",
+  "Initial Occupancy (+/-90% CL)",
+  "Recent Occupancy (+/- 90% CL)",
+  "N",
+  "p")
+
+datatable(results_comp, colnames = result_cols, options = dt_opts)
+```
+
+
+
+
