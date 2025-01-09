@@ -13,6 +13,8 @@ R is a programming language and free, open source platform. Originally developed
 This folder holds some R Script examples.
 
 * [NCSAT_CriterionA.Rmd](examples/NCSAT_CriterionA.Rmd) - An R Markdown script example of analysis for the NC Species Assessment Tool.
+* [Example datasets](examples/example_datasets.R) - R includes some sample datasets to test functions and scripts. You will often see examples online using these datasets. The most popular are "mtcars", and "iris".
+* [Example basics](examples/example_basics.R) - file with basic R syntax and commonly used functions with comments. Work is progress!
 
 ## Resources
 * [R Project](https://www.r-project.org/) - open source software required to run R code. Requires IT permission to install.
