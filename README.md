@@ -9,6 +9,9 @@ Community of Practice for R users at the NC Wildlife Resources Commission. This 
 ## What is R?
 R is a programming language and free, open source platform. Originally developed to run statistical analyses, it has evolved to offer robust data visualization tools, including web hosting. Since it is open source, contributors can develop “libraries” to perform specific functions. For example, the “[glm2](https://cran.r-project.org/web/packages/glm2/glm2.pdf)” library has functions for fitting generalized linear models.
 
+### Best Practices
+We've compiled some [Best Practices](best_practices.Rmd) here.
+
 ### Examples
 This folder holds some R Script examples.
 

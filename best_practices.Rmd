@@ -1,0 +1,85 @@
+---
+title: "R Best Practices"
+Author: "Scott K Anderson"
+Date: "2025-08-25"
+output:
+    html_document:
+        toc: TRUE
+        toc_depth: 2
+always_allow_html: TRUE
+---
+
+# Change One Thing at a Time
+When you change multiple things without running, it is much harder to find the mistake.
+
+Minimize the time for code - run - tweak cycle.
+
+# Load Libraries First
+
+Add all required libraries at the top of the script. This script requires the following libraries.
+
+```{r}
+library(dplyr)
+```
+# Make Comments
+The time you spend on your code is valuable. Many programmers spend 50-80% of their time reading and understanding others' code (or your own code from a long time ago!) rather than writing your own from scratch. Adding comments to the code makes this process much faster.
+
+Comments are text that are not run by R. Any text with a "#" in front of it is not executed.
+
+```{r}
+# This code does not run
+# is.numeric(1)
+
+# This code does run
+is.numeric(1)
+```
+
+# Test with Sample Data
+R has several included datasets. You can list them all by typing "data()".
+
+To load a dataset, use the following syntax
+
+```{r}
+# load data
+data(iris)
+```
+
+Often, when researching how to accomplish something, online resources will use one of them illustrate. Copy/Paste the code directly into your script, then tweak from there.
+
+```{r}
+# display first 6 rows of data
+head(iris)
+
+# display a list of column names
+colnames(iris)
+
+# plot data
+plot(iris$Sepal.Length, iris$Petal.Length)
+```
+
+## Create New Variables, Don't Overwrite Old Ones
+
+In general, when using data for multiple functions, it's good practice to assign it to another well-named variable for the use.
+
+```{r}
+plant_data <- iris
+
+# pare down data to only setosa records
+setosa_data <- subset(plant_data, Species == "setosa")
+unique(setosa_data$Species)
+```
+
+When using [piped functions](https://r4ds.had.co.nz/pipes.html), assign resulting data to a new variable. If the piping functions cause an error or you create a new pipe pathway, you won't have to reload the original data, saving time and making your code clearer.
+
+```{r}
+# Note: piping requires the "dplyr" library (loaded above)
+# Display unique species names
+unique(iris$Species)
+
+# create a new variable with only setosa species
+setosa_data <- iris %>%
+  subset(Species == "setosa")
+
+# Display unique species names
+unique(setosa_data$Species)
+```
