@@ -1,5 +1,5 @@
 # NC WRC R Community of Practice
-Community of Practice for R users at the NC Wildlife Resources Commission. This repository is a space for collaboration and troubleshooting.
+Community of Practice for R users at the [NC Wildlife Resources Commission](https://ncwildlife.gov). This repository is a space for collaboration and troubleshooting.
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Community of Practice for R users at the NC Wildlife Resources Commission. This 
 R is a programming language and free, open source platform. Originally developed to run statistical analyses, it has evolved to offer robust data visualization tools, including web hosting. Since it is open source, contributors can develop “libraries” to perform specific functions. For example, the “[glm2](https://cran.r-project.org/web/packages/glm2/glm2.pdf)” library has functions for fitting generalized linear models.
 
 ### Best Practices
-We've compiled some [Best Practices](best_practices.Rmd) here.
+We've compiled some [Best Practices](best_practices.Rmd) and an annotated list of [useful R libraries](useful_r_libraries.md).
 
 ### Examples
 This folder holds some R Script examples.

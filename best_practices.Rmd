@@ -34,6 +34,14 @@ Comments are text that are not run by R. Any text with a "#" in front of it is n
 is.numeric(1)
 ```
 
+# Print Output
+
+It is often good to print out messages while a long script is running, just to let the user know that it is working. To do this, you can use the following code:
+
+```{r}
+print("The code is still running")
+```
+
 # Test with Sample Data
 R has several included datasets. You can list them all by typing "data()".
 
